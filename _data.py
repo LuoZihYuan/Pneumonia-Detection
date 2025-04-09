@@ -129,7 +129,7 @@ def load_pneumonia(
       target_features.append([])
 
   if pca_mode == "global":
-    pca = PCA(n_components=5)
+    pca = PCA(n_components=2)
     print("Calculating PCA...")
     print(src_features.shape)
     target_dataset = np.concatenate(
@@ -137,7 +137,7 @@ def load_pneumonia(
     )
     print(pca.explained_variance_ratio_)
   elif pca_mode == "local":
-    pca = PCA(n_components=5)
+    pca = PCA(n_components=2)
     print("Calculating PCA...")
     print((len(target_features), len(target_features[0])))
     target_dataset = np.concatenate(
