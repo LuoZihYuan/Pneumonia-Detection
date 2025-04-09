@@ -10,6 +10,7 @@ from tempfile import tempdir
 RESIZE_SHAPE = (224, 224)
 PATH_RAWFILE = "./data/pneumonia.npy"
 TRAIN_TEST_SPLIT = (5232, 624)
+
 # To speed up calculation, we save previously generated dataset into your temporary
 # systems folder. If you are running this on a mac or a linux machine, they will be
 # automatically garbage-collected by the system when certain conditions are met (mac:
