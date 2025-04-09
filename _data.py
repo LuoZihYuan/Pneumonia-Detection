@@ -10,6 +10,11 @@ from tempfile import tempdir
 RESIZE_SHAPE = (224, 224)
 PATH_RAWFILE = "./data/pneumonia.npy"
 TRAIN_TEST_SPLIT = (5232, 624)
+# To speed up calculation, we save previously generated dataset into your temporary
+# systems folder. If you are running this on a mac or a linux machine, they will be
+# automatically garbage-collected by the system when certain conditions are met (mac:
+# system reboot or file not accessed in 3 days; linux: system reboot). If you are
+# running this on a windows machine, you might have to delete them by hand.
 TEMP_FOLDER = f"{tempdir}/pneumonia-detection/"
 
 
@@ -131,19 +136,15 @@ def load_pneumonia(
   if pca_mode == "global":
     pca = PCA(n_components=2)
     print("Calculating PCA...")
-    print(src_features.shape)
     target_dataset = np.concatenate(
       [target_features, pca.fit_transform(src_features), src_labels], axis=1
     )
-    print(pca.explained_variance_ratio_)
   elif pca_mode == "local":
     pca = PCA(n_components=2)
     print("Calculating PCA...")
-    print((len(target_features), len(target_features[0])))
     target_dataset = np.concatenate(
       [pca.fit_transform(target_features), src_labels], axis=1
     )
-    print(pca.explained_variance_ratio_)
   else:
     target_dataset = np.concatenate([target_features, src_labels], axis=1)
   np.save(temp_filepath, target_dataset)
