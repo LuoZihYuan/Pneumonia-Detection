@@ -5,6 +5,7 @@ from typing import Literal
 from pathlib import Path
 from skimage import io, color, transform, feature
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 from tempfile import tempdir
 
 RESIZE_SHAPE = (224, 224)
@@ -93,8 +94,6 @@ def load_pneumonia(
     return np.split(np.load(temp_filepath), [TRAIN_SIZE])
 
   src_file = np.load(PATH_RAWFILE)
-  if temp_filename == "pneumonia_raw.npy":
-    return np.split(src_file, [TRAIN_SIZE])
 
   src_features, src_labels = np.split(src_file, [IMAGE_PIXELS], axis=1)
   target_features = []
@@ -134,20 +133,29 @@ def load_pneumonia(
     else:
       target_features.append([])
 
+  sc = StandardScaler()
   if pca_mode == "global":
     pca = PCA(n_components=2)
     print("Calculating PCA...")
     target_dataset = np.concatenate(
-      [target_features, pca.fit_transform(src_features), src_labels], axis=1
+      [
+        sc.fit_transform(
+          np.concatenate([target_features, pca.fit_transform(src_features)], axis=1)
+        ),
+        src_labels,
+      ],
+      axis=1,
     )
   elif pca_mode == "local":
     pca = PCA(n_components=2)
     print("Calculating PCA...")
     target_dataset = np.concatenate(
-      [pca.fit_transform(target_features), src_labels], axis=1
+      [sc.fit_transform(pca.fit_transform(target_features)), src_labels], axis=1
     )
   else:
-    target_dataset = np.concatenate([target_features, src_labels], axis=1)
+    target_dataset = np.concatenate(
+      [sc.fit_transform(target_features), src_labels], axis=1
+    )
   np.save(temp_filepath, target_dataset)
   return np.split(target_dataset, [TRAIN_SIZE])
 
