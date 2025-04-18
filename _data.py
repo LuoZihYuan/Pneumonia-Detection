@@ -44,7 +44,9 @@ def pre_import_hook():
     image_pixels_2d[is_test]["image"].append(np.stack((image_pixel,) * 3, axis=-1))
     image_pixels_2d[is_test]["label"].append(int(is_pneumonia))
   image_pixels_2d[0]["image"] = np.array(image_pixels_2d[0]["image"]).astype(np.uint8)
+  image_pixels_2d[0]["label"] = np.array(image_pixels_2d[0]["label"])
   image_pixels_2d[1]["image"] = np.array(image_pixels_2d[1]["image"]).astype(np.uint8)
+  image_pixels_2d[1]["label"] = np.array(image_pixels_2d[1]["label"])
   np.save(PATH_PNEUMONIA_1D, image_pixels_1d[0] + image_pixels_1d[1])
   np.save(PATH_PNEUMONIA_2D, image_pixels_2d)
 
