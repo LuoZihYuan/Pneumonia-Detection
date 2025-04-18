@@ -9,7 +9,8 @@ from sklearn.preprocessing import StandardScaler
 from tempfile import tempdir
 
 RESIZE_SHAPE = (224, 224)
-PATH_RAWFILE = "./data/pneumonia.npy"
+PATH_PNEUMONIA_1D = "./data/pneumonia_1d.npy"
+PATH_PNEUMONIA_2D = "./data/pneumonia_2d.npy"
 TRAIN_TEST_SPLIT = (5232, 624)
 
 # To speed up calculation, we save previously generated dataset into your temporary
@@ -23,23 +24,29 @@ TEMP_FOLDER = f"{tempdir}/pneumonia-detection/"
 def pre_import_hook():
   Path(TEMP_FOLDER).mkdir(exist_ok=True)
 
-  if Path(PATH_RAWFILE).is_file():
+  if Path(PATH_PNEUMONIA_1D).is_file() and Path(PATH_PNEUMONIA_2D).is_file():
     return
 
   image_paths = [str(posix) for posix in list(Path("./data/").rglob("*.jpeg"))]
-  image_pixels = ([], [])
+  image_pixels_1d = ([], [])
+  image_pixels_2d = ({"image": [], "label": []}, {"image": [], "label": []})
 
   for image_path in tqdm(image_paths, desc="Pre-Import Hook"):
     image_file = io.imread(image_path)
     if len(image_file.shape) == 3:
       image_file = color.rgb2gray(image_file)
-    image_pixel = transform.resize(
-      image_file, RESIZE_SHAPE, preserve_range=True
-    ).flatten()
+    image_pixel = transform.resize(image_file, RESIZE_SHAPE, preserve_range=True)
     is_test = int("test" in image_path)
     is_pneumonia = "PNEUMONIA" in image_path
-    image_pixels[is_test].append(np.concatenate([image_pixel, [int(is_pneumonia)]]))
-  np.save(PATH_RAWFILE, image_pixels[0] + image_pixels[1])
+    image_pixels_1d[is_test].append(
+      np.concatenate([image_pixel.flatten(), [int(is_pneumonia)]])
+    )
+    image_pixels_2d[is_test]["image"].append(np.stack((image_pixel,) * 3, axis=-1))
+    image_pixels_2d[is_test]["label"].append(int(is_pneumonia))
+  image_pixels_2d[0]["image"] = np.array(image_pixels_2d[0]["image"]).astype(np.uint8)
+  image_pixels_2d[1]["image"] = np.array(image_pixels_2d[1]["image"]).astype(np.uint8)
+  np.save(PATH_PNEUMONIA_1D, image_pixels_1d[0] + image_pixels_1d[1])
+  np.save(PATH_PNEUMONIA_2D, image_pixels_2d)
 
 
 def resolve_filename(
@@ -64,7 +71,7 @@ def resolve_filename(
   return filename
 
 
-def load_pneumonia(
+def load_pneumonia_1d(
   include_raw: bool = True,
   include_hog: bool = False,
   include_lbp: bool = False,
@@ -93,7 +100,7 @@ def load_pneumonia(
   if Path(temp_filepath).is_file():
     return np.split(np.load(temp_filepath), [TRAIN_SIZE])
 
-  src_file = np.load(PATH_RAWFILE)
+  src_file = np.load(PATH_PNEUMONIA_1D)
 
   src_features, src_labels = np.split(src_file, [IMAGE_PIXELS], axis=1)
   target_features = []
@@ -160,7 +167,7 @@ def load_pneumonia(
   return np.split(target_dataset, [TRAIN_SIZE])
 
 
-PARAMETER_PERMUTATION = [
+PARAMETER_PERMUTATION_1D = [
   [True, True, True, "none"],
   [False, True, True, "none"],
   [True, False, True, "none"],
@@ -180,5 +187,11 @@ PARAMETER_PERMUTATION = [
   [False, True, False, "global"],
   [False, False, False, "global"],
 ]
+
+
+def load_pneumonia_2d():
+  train, test = np.load(PATH_PNEUMONIA_2D, allow_pickle=True)
+  return train, test
+
 
 pre_import_hook()
