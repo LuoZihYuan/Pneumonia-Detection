@@ -6,7 +6,7 @@ from pathlib import Path
 from skimage import io, color, transform, feature
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
-from tempfile import tempdir
+from tempfile import gettempdir
 
 RESIZE_SHAPE = (224, 224)
 PATH_PNEUMONIA_1D = "./data/pneumonia_1d.npy"
@@ -18,7 +18,7 @@ TRAIN_TEST_SPLIT = (5232, 624)
 # automatically garbage-collected by the system when certain conditions are met (mac:
 # system reboot or file not accessed in 3 days; linux: system reboot). If you are
 # running this on a windows machine, you might have to delete them by hand.
-TEMP_FOLDER = f"{tempdir}/pneumonia-detection/"
+TEMP_FOLDER = f"{gettempdir()}/pneumonia-detection/"
 
 
 def pre_import_hook():
@@ -175,8 +175,8 @@ PARAMETER_PERMUTATION_1D = [
   [True, False, True, "none"],
   [True, True, False, "none"],
   [False, False, True, "none"],
-  [True, False, False, "none"],
   [False, True, False, "none"],
+  [True, False, False, "none"],
   [True, True, True, "local"],
   [False, True, True, "local"],
   [True, False, True, "local"],
