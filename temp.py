@@ -18,6 +18,10 @@ from transformers import AutoImageProcessor, AutoModelForImageClassification
 
 
 class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
+  """
+  A scikit-learn compatible classifier that uses pre-trained HuggingFace vision models.
+  """
+
   def __init__(
     self,
     pretrained_model_name_or_path: str,
@@ -31,30 +35,64 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
     batch_size: int | str = "auto",
     max_iter: int = 200,
     early_stopping: bool = False,
-    validation_fraction=0.1,  # Only used if early_stopping is True.
-    tol: float = 1e-4,  # Only used if early_stopping is True.
-    n_iter_no_change=10,  # Only used if early_stopping is True.
+    validation_fraction=0.1,
+    tol: float = 1e-4,
+    n_iter_no_change=10,
     learning_rate: float = 1e-5,
     alpha: float = 0.0001,
-    beta_1: float = 0.9,  # Only used when solver='adam' or 'adamw'.
-    beta_2: float = 0.999,  # Only used when solver='adam' or 'adamw'.
-    epsilon: float = 1e-8,  # Only used when solver='adam' or 'adamw'.
-    momentum: float = 0.9,  # Only used when solver='sgd'.
-    nesterovs_momentum: bool = True,  # Only used when solver='sgd', and momentum greater than 0.
-    rho: float = 0.99,  # Only used when solver='rmsprop'.
-    max_fun: int = 15000,  # Only used when solver='lbfgs'.
+    beta_1: float = 0.9,
+    beta_2: float = 0.999,
+    epsilon: float = 1e-8,
+    momentum: float = 0.9,
+    nesterovs_momentum: bool = True,
+    rho: float = 0.99,
+    max_fun: int = 15000,
     lr_scheduler: Literal[
       "reduce_on_plateau", "cosine_annealing", "step", "exponential", None
     ] = None,
-    lr_scheduler_patience: int = 5,  # Only used when lr_scheduler='reduce_on_plateau'
-    lr_scheduler_factor: float = 0.1,  # Only used when lr_scheduler='reduce_on_plateau' or 'exponential'
-    lr_scheduler_min_lr: Union[
-      List[float], float
-    ] = 0,  # Only used when lr_scheduler='reduce_on_plateau'
-    lr_scheduler_t_max: int = None,  # Only used when lr_scheduler='cosine_annealing'
-    lr_scheduler_step_size: int = 10,  # Only used when lr_scheduler='step'
+    lr_scheduler_patience: int = 5,
+    lr_scheduler_factor: float = 0.1,
+    lr_scheduler_min_lr: Union[List[float], float] = 0,
+    lr_scheduler_t_max: int = None,
+    lr_scheduler_step_size: int = 10,
     verbose: bool = False,
   ):
+    """
+    Initialize the classifier with the given parameters.
+
+    Args:
+        pretrained_model_name_or_path: Name or path of the pre-trained model
+        binary_classification: If True, perform binary classification
+        freeze_pretrained: If True, freeze all layers except the classifier
+        freeze_except_layers: List of layer names to unfreeze when freeze_pretrained is True
+        class_weight: Class weights for imbalanced datasets
+        solver: Optimizer to use for training
+        random_state: Random seed for reproducibility
+        shuffle: Whether to shuffle the training data
+        batch_size: Batch size for training, or "auto" to determine automatically
+        max_iter: Maximum number of training epochs
+        early_stopping: Whether to use early stopping
+        validation_fraction: Fraction of training data to use for validation
+        tol: Tolerance for early stopping
+        n_iter_no_change: Number of epochs with no improvement for early stopping
+        learning_rate: Learning rate for the optimizer
+        alpha: L2 penalty (regularization term) parameter
+        beta_1: Exponential decay rate for first moment estimates (Adam/AdamW)
+        beta_2: Exponential decay rate for second moment estimates (Adam/AdamW)
+        epsilon: Value for numerical stability (Adam/AdamW/RMSprop)
+        momentum: Momentum factor (SGD)
+        nesterovs_momentum: Whether to use Nesterov momentum (SGD)
+        rho: Squared gradient rolling average factor (RMSprop)
+        max_fun: Maximum number of function evaluations (LBFGS)
+        lr_scheduler: Learning rate scheduler to use
+        lr_scheduler_patience: Patience for ReduceLROnPlateau
+        lr_scheduler_factor: Factor for reducing learning rate
+        lr_scheduler_min_lr: Minimum learning rate
+        lr_scheduler_t_max: Maximum number of iterations for CosineAnnealingLR
+        lr_scheduler_step_size: Period of learning rate decay for StepLR
+        verbose: Whether to print training progress
+    """
+    # Store all parameters
     self.pretrained_model_name_or_path = pretrained_model_name_or_path
     self.binary_classification = binary_classification
     self.freeze_pretrained = freeze_pretrained
@@ -86,61 +124,87 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
     self.lr_scheduler_step_size = lr_scheduler_step_size
     self.verbose = verbose
 
+    # Initialize internal attributes
+    self._model = None
+    self._image_processor = None
+    self._optimizer = None
+    self._scheduler = None
+    self._criterion = None
+    self._label_weights = None
+    self._best_model_state = None
+    self.unique_labels = None
+
+    # Set up random state
     if self.random_state is not None:
       self.rng = np.random.RandomState(self.random_state)
+      torch.manual_seed(self.random_state)
+      if torch.cuda.is_available():
+        torch.cuda.manual_seed(self.random_state)
+        torch.cuda.manual_seed_all(self.random_state)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
     else:
       self.rng = np.random.RandomState()
 
-    torch.manual_seed(random_state)
-    if torch.cuda.is_available():
-      self.device = torch.device("cuda")
-      torch.cuda.manual_seed(self.random_state)
-      torch.cuda.manual_seed_all(self.random_state)
-      torch.backends.cudnn.deterministic = True
-      torch.backends.cudnn.benchmark = False
-    else:
-      self.device = torch.device("cpu")
+    # Set device
+    self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
   def _prepare_model(self):
+    """
+    Load and prepare the pre-trained model.
+    """
+    # Load image processor
     self._image_processor = AutoImageProcessor.from_pretrained(
       self.pretrained_model_name_or_path,
     )
 
+    # Determine number of labels for the model
     if self.binary_classification:
       num_labels = 1
     else:
       num_labels = len(self.unique_labels)
+
+    # Load model
     self._model = AutoModelForImageClassification.from_pretrained(
       self.pretrained_model_name_or_path,
       num_labels=num_labels,
       ignore_mismatched_sizes=True,
     )
 
+    # Freeze layers if specified
     if self.freeze_pretrained:
+      # First freeze all parameters
       for param in self._model.parameters():
         param.requires_grad = False
 
+      # Then unfreeze the classifier layer
       for param in self._model.classifier.parameters():
         param.requires_grad = True
 
+      # Unfreeze specific layers if requested
       if self.freeze_except_layers:
         for name, param in self._model.named_parameters():
           if any(layer_name in name for layer_name in self.freeze_except_layers):
             param.requires_grad = True
 
-    if self.verbose and self.freeze_pretrained:
-      trainable_params = sum(
-        param.numel() for param in self._model.parameters() if param.requires_grad
-      )
-      total_params = sum(param.numel() for param in self._model.parameters())
-      print(
-        f"Trainable parameters: {trainable_params:,} ({trainable_params / total_params:.2%})"
-      )
-      print(f"Total parameters: {total_params:,}")
+      # Print trainable parameters info
+      if self.verbose:
+        trainable_params = sum(
+          param.numel() for param in self._model.parameters() if param.requires_grad
+        )
+        total_params = sum(param.numel() for param in self._model.parameters())
+        print(
+          f"Trainable parameters: {trainable_params:,} ({trainable_params / total_params:.2%})"
+        )
+        print(f"Total parameters: {total_params:,}")
 
+    # Move model to device
     self._model.to(self.device)
 
   def _prepare_optimizer(self):
+    """
+    Set up the optimizer based on the selected solver.
+    """
     parameters = [param for param in self._model.parameters() if param.requires_grad]
 
     if self.solver == "adamw":
@@ -184,6 +248,9 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
       )
 
   def _prepare_scheduler(self):
+    """
+    Set up the learning rate scheduler.
+    """
     if self.lr_scheduler == "reduce_on_plateau":
       self._scheduler = ReduceLROnPlateau(
         self._optimizer,
@@ -208,6 +275,12 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
       self._scheduler = None
 
   def _prepare_weights(self, y_train: np.ndarray):
+    """
+    Prepare class weights for imbalanced datasets.
+
+    Args:
+        y_train: Training labels
+    """
     self._label_weights = None
 
     if self.class_weight is None:
@@ -233,27 +306,46 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
         self._label_weights[label] = weight
       self._label_weights = self._label_weights.to(self.device)
 
-  def _prepare_dataloader(self, X: np.ndarray, y: np.ndarray):
+  def _prepare_dataloader(self, X: np.ndarray, y: np.ndarray = None):
+    """
+    Prepare a PyTorch DataLoader for the given data.
+
+    Args:
+        X: Input images
+        y: Labels (if None, dummy labels will be created)
+
+    Returns:
+        DataLoader for the data
+    """
+    # Create tensors for inputs and labels
+    if y is None:
+      # For prediction, create dummy labels
+      y = np.zeros(len(X))
+
     if self.binary_classification:
       y_tensor = torch.tensor(y, dtype=torch.float).unsqueeze(1)
     else:
       y_tensor = torch.tensor(y, dtype=torch.long)
 
+    # Process images and create dataset
     dataset = TensorDataset(
       self._image_processor(X, return_tensors="pt").pixel_values,
       y_tensor,
     )
 
+    # Determine batch size
     if self.batch_size == "auto":
       batch_size = min(32, len(X))
     else:
       batch_size = self.batch_size
 
+    # Set up random generator if needed
     generator = None
-    if self.random_state is not None:
+    if self.random_state is not None and self.shuffle:
       generator = torch.Generator()
       generator.manual_seed(self.random_state)
 
+    # Create and return the DataLoader
     return DataLoader(
       dataset,
       batch_size=batch_size,
@@ -262,6 +354,9 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
     )
 
   def _prepare_loss_function(self):
+    """
+    Set up the loss function based on the classification type.
+    """
     if self.binary_classification:
       self._criterion = torch.nn.BCEWithLogitsLoss(
         pos_weight=self._label_weights if self._label_weights is not None else None
@@ -272,18 +367,29 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
       )
 
   def _validate_and_prepare_labels(self, y_train: np.ndarray) -> np.ndarray:
+    """
+    Validate and prepare the labels for training.
+
+    Args:
+        y_train: Training labels
+
+    Returns:
+        Processed training labels
+    """
     self.unique_labels = np.unique(y_train)
+
     # Verify binary classification
-    if self.binary_classification and len(self.unique_labels) > 2:
-      raise ValueError(
-        f"Binary classification requires 2 classes, but got {len(self.unique_labels)} classes."
-      )
-    elif self.binary_classification and len(self.unique_labels) == 1:
-      raise ValueError(
-        f"Training data contains only one class: {self.unique_labels[0]}. Need samples from both classes for binary classification."
-      )
-    elif self.binary_classification:
-      # Remap labels to 0 and 1
+    if self.binary_classification:
+      if len(self.unique_labels) > 2:
+        raise ValueError(
+          f"Binary classification requires 2 classes, but got {len(self.unique_labels)} classes."
+        )
+      elif len(self.unique_labels) == 1:
+        raise ValueError(
+          f"Training data contains only one class: {self.unique_labels[0]}. Need samples from both classes for binary classification."
+        )
+
+      # Remap labels to 0 and 1 if needed
       if not np.array_equal(np.sort(self.unique_labels), np.array([0, 1])):
         y_map = {label: i for i, label in enumerate(self.unique_labels)}
         y_train = np.array([y_map[y] for y in y_train])
@@ -294,7 +400,18 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
     return y_train
 
   def _prepare_train_validation_split(self, X_train, y_train):
+    """
+    Prepare training and validation data loaders.
+
+    Args:
+        X_train: Training data
+        y_train: Training labels
+
+    Returns:
+        Tuple of (train_dataloader, val_dataloader)
+    """
     if self.early_stopping or self.lr_scheduler == "reduce_on_plateau":
+      # Split data for validation
       X_train_split, X_val, y_train_split, y_val = train_test_split(
         X_train,
         y_train,
@@ -306,40 +423,64 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
       val_dataloader = self._prepare_dataloader(X_val, y_val)
       return train_dataloader, val_dataloader
     else:
+      # No validation split needed
       train_dataloader = self._prepare_dataloader(X_train, y_train)
       return train_dataloader, None
 
   def fit(self, X_train: np.ndarray, y_train: np.ndarray):
+    """
+    Fit the model to the training data.
+
+    Args:
+        X_train: Training images
+        y_train: Training labels
+
+    Returns:
+        self
+    """
+    # Validate and prepare labels
     y_train = self._validate_and_prepare_labels(y_train)
 
+    # Set up model, optimizer, scheduler, and weights
     self._prepare_model()
     self._prepare_optimizer()
     self._prepare_scheduler()
     self._prepare_weights(y_train)
 
+    # Prepare data loaders
     train_dataloader, val_dataloader = self._prepare_train_validation_split(
       X_train, y_train
     )
 
+    # Report class weights if verbose
     if self._label_weights is not None and self.verbose:
       print(f"Using class weights: {self._label_weights}")
 
+    # Set up loss function
     self._prepare_loss_function()
 
+    # Train the model
     self._train_model(train_dataloader, val_dataloader)
 
     return self
 
   def _train_model(self, train_dataloader, val_dataloader=None):
+    """
+    Train the model with the given data loaders.
+
+    Args:
+        train_dataloader: DataLoader for training data
+        val_dataloader: DataLoader for validation data
+    """
     best_loss = float("inf")
     no_improvement_count = 0
-    self._best_model_state = None  # Initialize to None
+    self._best_model_state = None
 
     for epoch in tqdm(range(self.max_iter), desc="Epoch", position=0):
       # Train for one epoch
       avg_train_loss = self._train_epoch(train_dataloader)
 
-      # Evaluate on validation set if needed
+      # Evaluate on validation set if available
       if val_dataloader is not None:
         avg_val_loss = self._evaluate_model(val_dataloader)
 
@@ -366,12 +507,14 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
           best_loss = avg_val_loss
           self._best_model_state = self._model.state_dict().copy()
 
+      # Update schedulers that don't need validation loss
       if self.lr_scheduler in ["cosine_annealing", "step", "exponential"]:
         self._scheduler.step()
         if self.verbose:
           current_lr = self._optimizer.param_groups[0]["lr"]
           print(f"Epoch {epoch + 1} - Current learning rate: {current_lr:.2e}")
 
+      # Print progress
       if self.verbose:
         if val_dataloader is not None:
           print(
@@ -380,12 +523,23 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
         else:
           print(f"Epoch {epoch + 1}/{self.max_iter} - Train Loss: {avg_train_loss:.4f}")
 
+    # Save the best model state if none was saved yet
     if self._best_model_state is None:
       self._best_model_state = self._model.state_dict().copy()
+    # Load the best model if validation was used
     elif self.early_stopping or val_dataloader is not None:
       self._model.load_state_dict(self._best_model_state)
 
   def _train_epoch(self, train_dataloader):
+    """
+    Train for one epoch.
+
+    Args:
+        train_dataloader: DataLoader for training data
+
+    Returns:
+        Average training loss for the epoch
+    """
     self._model.train()
     train_loss = 0.0
     n_batches = 0
@@ -402,6 +556,16 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
     return train_loss / n_batches
 
   def _train_batch(self, inputs, labels):
+    """
+    Train on a single batch.
+
+    Args:
+        inputs: Batch of input images
+        labels: Batch of labels
+
+    Returns:
+        Loss for this batch
+    """
     if self.solver == "lbfgs":
 
       def closure():
@@ -418,6 +582,7 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
         return loss
 
       loss = self._optimizer.step(closure)
+      return loss.item()
     else:
       self._optimizer.zero_grad()
       outputs = self._model(inputs, labels=labels)
@@ -431,9 +596,18 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
       loss.backward()
       self._optimizer.step()
 
-    return loss.item()
+      return loss.item()
 
   def _evaluate_model(self, val_dataloader):
+    """
+    Evaluate the model on the validation data.
+
+    Args:
+        val_dataloader: DataLoader for validation data
+
+    Returns:
+        Average validation loss
+    """
     self._model.eval()
     val_loss = 0.0
     n_val_batches = 0
@@ -458,10 +632,19 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
     return val_loss / n_val_batches
 
   def predict(self, X_test: np.ndarray) -> np.ndarray:
+    """
+    Predict class labels for the input samples.
+
+    Args:
+        X_test: Test images
+
+    Returns:
+        Predicted class labels
+    """
     if self._model is None:
       raise ValueError("Model not trained. Call fit() first.")
 
-    dataloader = self._prepare_dataloader(X_test, np.zeros(len(X_test)))
+    dataloader = self._prepare_dataloader(X_test)
 
     self._model.eval()
 
@@ -485,10 +668,19 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
     return y_pred
 
   def predict_proba(self, X_test: np.ndarray) -> np.ndarray:
+    """
+    Predict class probabilities for the input samples.
+
+    Args:
+        X_test: Test images
+
+    Returns:
+        Predicted class probabilities
+    """
     if self._model is None:
       raise ValueError("Model not trained. Call fit() first.")
 
-    dataloader = self._prepare_dataloader(X_test, np.zeros(len(X_test)))
+    dataloader = self._prepare_dataloader(X_test)
 
     self._model.eval()
 
@@ -512,6 +704,10 @@ class HGPretrainedClassifier(BaseEstimator, ClassifierMixin):
 
 
 class ConvNeXTPretrainedClassifier(HGPretrainedClassifier):
+  """
+  A classifier based on ConvNeXT pre-trained models.
+  """
+
   def __init__(
     self,
     pretrained_model_name_or_path: str = "facebook/convnextv2-atto-1k-224",
@@ -525,28 +721,26 @@ class ConvNeXTPretrainedClassifier(HGPretrainedClassifier):
     batch_size: int | str = "auto",
     max_iter: int = 200,
     early_stopping: bool = False,
-    validation_fraction=0.1,  # Only used if early_stopping is True.
-    tol: float = 1e-4,  # Only used if early_stopping is True.
-    n_iter_no_change=10,  # Only used if early_stopping is True.
+    validation_fraction=0.1,
+    tol: float = 1e-4,
+    n_iter_no_change=10,
     learning_rate: float = 1e-5,
     alpha: float = 0.0001,
-    beta_1: float = 0.9,  # Only used when solver='adam' or 'adamw'.
-    beta_2: float = 0.999,  # Only used when solver='adam' or 'adamw'.
-    epsilon: float = 1e-8,  # Only used when solver='adam' or 'adamw'.
-    momentum: float = 0.9,  # Only used when solver='sgd'.
-    nesterovs_momentum: bool = True,  # Only used when solver='sgd', and momentum greater than 0.
-    rho: float = 0.99,  # Only used when solver='rmsprop'.
-    max_fun: int = 15000,  # Only used when solver='lbfgs'.
+    beta_1: float = 0.9,
+    beta_2: float = 0.999,
+    epsilon: float = 1e-8,
+    momentum: float = 0.9,
+    nesterovs_momentum: bool = True,
+    rho: float = 0.99,
+    max_fun: int = 15000,
     lr_scheduler: Literal[
       "reduce_on_plateau", "cosine_annealing", "step", "exponential", None
     ] = None,
-    lr_scheduler_patience: int = 5,  # Only used when lr_scheduler='reduce_on_plateau'
-    lr_scheduler_factor: float = 0.1,  # Only used when lr_scheduler='reduce_on_plateau' or 'exponential'
-    lr_scheduler_min_lr: Union[
-      List[float], float
-    ] = 0,  # Only used when lr_scheduler='reduce_on_plateau'
-    lr_scheduler_t_max: int = None,  # Only used when lr_scheduler='cosine_annealing'
-    lr_scheduler_step_size: int = 10,  # Only used when lr_scheduler='step'
+    lr_scheduler_patience: int = 5,
+    lr_scheduler_factor: float = 0.1,
+    lr_scheduler_min_lr: Union[List[float], float] = 0,
+    lr_scheduler_t_max: int = None,
+    lr_scheduler_step_size: int = 10,
     verbose: bool = False,
   ):
     super().__init__(
@@ -584,6 +778,10 @@ class ConvNeXTPretrainedClassifier(HGPretrainedClassifier):
 
 
 class EfficientNetPretrainedClassifier(HGPretrainedClassifier):
+  """
+  A classifier based on EfficientNet pre-trained models.
+  """
+
   def __init__(
     self,
     pretrained_model_name_or_path: str = "google/efficientnet-b0",
@@ -597,28 +795,26 @@ class EfficientNetPretrainedClassifier(HGPretrainedClassifier):
     batch_size: int | str = "auto",
     max_iter: int = 200,
     early_stopping: bool = False,
-    validation_fraction=0.1,  # Only used if early_stopping is True.
-    tol: float = 1e-4,  # Only used if early_stopping is True.
-    n_iter_no_change=10,  # Only used if early_stopping is True.
+    validation_fraction=0.1,
+    tol: float = 1e-4,
+    n_iter_no_change=10,
     learning_rate: float = 1e-5,
     alpha: float = 0.0001,
-    beta_1: float = 0.9,  # Only used when solver='adam' or 'adamw'.
-    beta_2: float = 0.999,  # Only used when solver='adam' or 'adamw'.
-    epsilon: float = 1e-8,  # Only used when solver='adam' or 'adamw'.
-    momentum: float = 0.9,  # Only used when solver='sgd'.
-    nesterovs_momentum: bool = True,  # Only used when solver='sgd', and momentum greater than 0.
-    rho: float = 0.9,  # Only used when solver='rmsprop'.
-    max_fun: int = 15000,  # Only used when solver='lbfgs'.
+    beta_1: float = 0.9,
+    beta_2: float = 0.999,
+    epsilon: float = 1e-8,
+    momentum: float = 0.9,
+    nesterovs_momentum: bool = True,
+    rho: float = 0.9,
+    max_fun: int = 15000,
     lr_scheduler: Literal[
       "reduce_on_plateau", "cosine_annealing", "step", "exponential", None
     ] = None,
-    lr_scheduler_patience: int = 5,  # Only used when lr_scheduler='reduce_on_plateau'
-    lr_scheduler_factor: float = 0.1,  # Only used when lr_scheduler='reduce_on_plateau' or 'exponential'
-    lr_scheduler_min_lr: Union[
-      List[float], float
-    ] = 0,  # Only used when lr_scheduler='reduce_on_plateau'
-    lr_scheduler_t_max: int = None,  # Only used when lr_scheduler='cosine_annealing'
-    lr_scheduler_step_size: int = 10,  # Only used when lr_scheduler='step'
+    lr_scheduler_patience: int = 5,
+    lr_scheduler_factor: float = 0.1,
+    lr_scheduler_min_lr: Union[List[float], float] = 0,
+    lr_scheduler_t_max: int = None,
+    lr_scheduler_step_size: int = 10,
     verbose: bool = False,
   ):
     super().__init__(
@@ -656,6 +852,10 @@ class EfficientNetPretrainedClassifier(HGPretrainedClassifier):
 
 
 class ResNetPretrainedClassifier(HGPretrainedClassifier):
+  """
+  A classifier based on ResNet pre-trained models.
+  """
+
   def __init__(
     self,
     pretrained_model_name_or_path: str = "microsoft/resnet-18",
@@ -669,28 +869,26 @@ class ResNetPretrainedClassifier(HGPretrainedClassifier):
     batch_size: int | str = "auto",
     max_iter: int = 200,
     early_stopping: bool = False,
-    validation_fraction=0.1,  # Only used if early_stopping is True.
-    tol: float = 1e-4,  # Only used if early_stopping is True.
-    n_iter_no_change=10,  # Only used if early_stopping is True.
+    validation_fraction=0.1,
+    tol: float = 1e-4,
+    n_iter_no_change=10,
     learning_rate: float = 1e-5,
     alpha: float = 0.0001,
-    beta_1: float = 0.9,  # Only used when solver='adam' or 'adamw'.
-    beta_2: float = 0.999,  # Only used when solver='adam' or 'adamw'.
-    epsilon: float = 1e-8,  # Only used when solver='adam' or 'adamw'.
-    momentum: float = 0.875,  # Only used when solver='sgd'.
-    nesterovs_momentum: bool = True,  # Only used when solver='sgd', and momentum greater than 0.
-    rho: float = 0.99,  # Only used when solver='rmsprop'.
-    max_fun: int = 15000,  # Only used when solver='lbfgs'.
+    beta_1: float = 0.9,
+    beta_2: float = 0.999,
+    epsilon: float = 1e-8,
+    momentum: float = 0.875,
+    nesterovs_momentum: bool = True,
+    rho: float = 0.99,
+    max_fun: int = 15000,
     lr_scheduler: Literal[
       "reduce_on_plateau", "cosine_annealing", "step", "exponential", None
     ] = None,
-    lr_scheduler_patience: int = 5,  # Only used when lr_scheduler='reduce_on_plateau'
-    lr_scheduler_factor: float = 0.1,  # Only used when lr_scheduler='reduce_on_plateau' or 'exponential'
-    lr_scheduler_min_lr: Union[
-      List[float], float
-    ] = 0,  # Only used when lr_scheduler='reduce_on_plateau'
-    lr_scheduler_t_max: int = None,  # Only used when lr_scheduler='cosine_annealing'
-    lr_scheduler_step_size: int = 10,  # Only used when lr_scheduler='step'
+    lr_scheduler_patience: int = 5,
+    lr_scheduler_factor: float = 0.1,
+    lr_scheduler_min_lr: Union[List[float], float] = 0,
+    lr_scheduler_t_max: int = None,
+    lr_scheduler_step_size: int = 10,
     verbose: bool = False,
   ):
     super().__init__(
@@ -728,6 +926,10 @@ class ResNetPretrainedClassifier(HGPretrainedClassifier):
 
 
 class SwinPretrainedClassifier(HGPretrainedClassifier):
+  """
+  A classifier based on Swin Transformer pre-trained models.
+  """
+
   def __init__(
     self,
     pretrained_model_name_or_path: str = "microsoft/swin-tiny-patch4-window7-224",
@@ -741,28 +943,26 @@ class SwinPretrainedClassifier(HGPretrainedClassifier):
     batch_size: int | str = "auto",
     max_iter: int = 200,
     early_stopping: bool = False,
-    validation_fraction=0.1,  # Only used if early_stopping is True.
-    tol: float = 1e-4,  # Only used if early_stopping is True.
-    n_iter_no_change=10,  # Only used if early_stopping is True.
+    validation_fraction=0.1,
+    tol: float = 1e-4,
+    n_iter_no_change=10,
     learning_rate: float = 1e-5,
     alpha: float = 0.0001,
-    beta_1: float = 0.9,  # Only used when solver='adam' or 'adamw'.
-    beta_2: float = 0.999,  # Only used when solver='adam' or 'adamw'.
-    epsilon: float = 1e-8,  # Only used when solver='adam' or 'adamw'.
-    momentum: float = 0.9,  # Only used when solver='sgd'.
-    nesterovs_momentum: bool = True,  # Only used when solver='sgd', and momentum greater than 0.
-    rho: float = 0.99,  # Only used when solver='rmsprop'.
-    max_fun: int = 15000,  # Only used when solver='lbfgs'.
+    beta_1: float = 0.9,
+    beta_2: float = 0.999,
+    epsilon: float = 1e-8,
+    momentum: float = 0.9,
+    nesterovs_momentum: bool = True,
+    rho: float = 0.99,
+    max_fun: int = 15000,
     lr_scheduler: Literal[
       "reduce_on_plateau", "cosine_annealing", "step", "exponential", None
     ] = None,
-    lr_scheduler_patience: int = 5,  # Only used when lr_scheduler='reduce_on_plateau'
-    lr_scheduler_factor: float = 0.1,  # Only used when lr_scheduler='reduce_on_plateau' or 'exponential'
-    lr_scheduler_min_lr: Union[
-      List[float], float
-    ] = 0,  # Only used when lr_scheduler='reduce_on_plateau'
-    lr_scheduler_t_max: int = None,  # Only used when lr_scheduler='cosine_annealing'
-    lr_scheduler_step_size: int = 10,  # Only used when lr_scheduler='step'
+    lr_scheduler_patience: int = 5,
+    lr_scheduler_factor: float = 0.1,
+    lr_scheduler_min_lr: Union[List[float], float] = 0,
+    lr_scheduler_t_max: int = None,
+    lr_scheduler_step_size: int = 10,
     verbose: bool = False,
   ):
     super().__init__(
@@ -800,6 +1000,10 @@ class SwinPretrainedClassifier(HGPretrainedClassifier):
 
 
 class ViTPretrainedClassifier(HGPretrainedClassifier):
+  """
+  A classifier based on Vision Transformer (ViT) pre-trained models.
+  """
+
   def __init__(
     self,
     pretrained_model_name_or_path: str = "google/vit-base-patch16-224-in21k",
@@ -813,28 +1017,26 @@ class ViTPretrainedClassifier(HGPretrainedClassifier):
     batch_size: int | str = "auto",
     max_iter: int = 200,
     early_stopping: bool = False,
-    validation_fraction=0.1,  # Only used if early_stopping is True.
-    tol: float = 1e-4,  # Only used if early_stopping is True.
-    n_iter_no_change=10,  # Only used if early_stopping is True.
+    validation_fraction=0.1,
+    tol: float = 1e-4,
+    n_iter_no_change=10,
     learning_rate: float = 1e-5,
     alpha: float = 0.0001,
-    beta_1: float = 0.9,  # Only used when solver='adam' or 'adamw'.
-    beta_2: float = 0.999,  # Only used when solver='adam' or 'adamw'.
-    epsilon: float = 1e-8,  # Only used when solver='adam' or 'adamw'.
-    momentum: float = 0.9,  # Only used when solver='sgd'.
-    nesterovs_momentum: bool = True,  # Only used when solver='sgd', and momentum greater than 0.
-    rho: float = 0.99,  # Only used when solver='rmsprop'.
-    max_fun: int = 15000,  # Only used when solver='lbfgs'.
+    beta_1: float = 0.9,
+    beta_2: float = 0.999,
+    epsilon: float = 1e-8,
+    momentum: float = 0.9,
+    nesterovs_momentum: bool = True,
+    rho: float = 0.99,
+    max_fun: int = 15000,
     lr_scheduler: Literal[
       "reduce_on_plateau", "cosine_annealing", "step", "exponential", None
     ] = None,
-    lr_scheduler_patience: int = 5,  # Only used when lr_scheduler='reduce_on_plateau'
-    lr_scheduler_factor: float = 0.1,  # Only used when lr_scheduler='reduce_on_plateau' or 'exponential'
-    lr_scheduler_min_lr: Union[
-      List[float], float
-    ] = 0,  # Only used when lr_scheduler='reduce_on_plateau'
-    lr_scheduler_t_max: int = None,  # Only used when lr_scheduler='cosine_annealing'
-    lr_scheduler_step_size: int = 10,  # Only used when lr_scheduler='step'
+    lr_scheduler_patience: int = 5,
+    lr_scheduler_factor: float = 0.1,
+    lr_scheduler_min_lr: Union[List[float], float] = 0,
+    lr_scheduler_t_max: int = None,
+    lr_scheduler_step_size: int = 10,
     verbose: bool = False,
   ):
     super().__init__(
