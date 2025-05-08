@@ -41,7 +41,7 @@ def pre_import_hook():
     image_pixels_1d[is_test].append(
       np.concatenate([image_pixel.flatten(), [int(is_pneumonia)]])
     )
-    image_pixels_2d[is_test]["image"].append(np.stack((image_pixel,) * 3, axis=-1))
+    image_pixels_2d[is_test]["image"].append(np.stack((image_pixel,) * 3))
     image_pixels_2d[is_test]["label"].append(int(is_pneumonia))
   image_pixels_2d[0]["image"] = np.array(image_pixels_2d[0]["image"]).astype(np.uint8)
   image_pixels_2d[0]["label"] = np.array(image_pixels_2d[0]["label"])
