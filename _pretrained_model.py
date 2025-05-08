@@ -4,10 +4,11 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 import torch
 import numpy as np
 
-from transformers import AutoImageProcessor
+from torch.nn import Module
 from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score
 from sklearn.exceptions import NotFittedError
+from torchvision import transforms
 
 try:
   # Check if we're in a Jupyter/IPython environment
@@ -23,47 +24,32 @@ except NameError:
   from tqdm import tqdm
 
 
-class HFPretrainedDataset(Dataset):
+class TorchImageDataset(Dataset):
   def __init__(
     self,
     features: np.ndarray,
     labels: np.ndarray,
-    pretrained_model_name_or_path: str,
     data_transforms: Callable = None,
   ):
-    self.pretrained_model_name_or_path = pretrained_model_name_or_path
     self.features = features
     self.labels = labels
     self.data_transforms = data_transforms
-
-    self._image_processor = AutoImageProcessor.from_pretrained(
-      self.pretrained_model_name_or_path, use_fast=True
-    )
 
   def __len__(self):
     return len(self.labels)
 
   def __getitem__(self, idx):
-    image = self.features[idx]
+    image = self.data_transforms(self.features[idx])
     label = self.labels[idx]
-
-    if self.data_transforms is not None:
-      image = self.data_transforms(image)
-
-    image = self._image_processor(image, return_tensors="pt").pixel_values.squeeze(0)
-
     return image, label
 
 
-class HFPretrainedClassifier(BaseEstimator, ClassifierMixin):
+class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
   def __init__(
     self,
-    pretrained_model_name_or_path: str,
     # Core model configuration
-    freeze_pretrained: bool = False,
-    freeze_except_layers: list = None,
     class_weight: Union[Dict[int, float], str, None] = None,
-    data_transforms: Callable = None,
+    data_transforms: List[Callable] = None,
     # Training configuration
     random_state: int = None,
     shuffle: bool = True,
@@ -104,9 +90,6 @@ class HFPretrainedClassifier(BaseEstimator, ClassifierMixin):
     t_max: int = None,  # Only used when scheduler='cosine_annealing'
     step_size: int = 10,  # Only used when scheduler='step'
   ):
-    self.pretrained_model_name_or_path = pretrained_model_name_or_path
-    self.freeze_pretrained = freeze_pretrained
-    self.freeze_except_layers = freeze_except_layers
     self.class_weight = class_weight
     self.data_transforms = data_transforms
     self.random_state = random_state
@@ -169,37 +152,8 @@ class HFPretrainedClassifier(BaseEstimator, ClassifierMixin):
     y = np.array([y_map[label] for label in y])
     return y
 
-  def _prepare_model(self):
-    from transformers import AutoModelForImageClassification
-
-    self._model = AutoModelForImageClassification.from_pretrained(
-      self.pretrained_model_name_or_path,
-      num_labels=(1 if self.n_classes_ == 2 else self.n_classes_),
-      ignore_mismatched_sizes=True,
-    )
-
-    if self.freeze_pretrained:
-      total_params = 0
-      for param in self._model.parameters():
-        total_params += param.numel()
-        param.requires_grad = False
-
-      for param in self._model.classifier.parameters():
-        param.requires_grad = True
-
-      if self.freeze_except_layers:
-        for name, param in self._model.named_parameters():
-          if any(layer_name in name for layer_name in self.freeze_except_layers):
-            param.requires_grad = True
-
-      if self.verbose:
-        trainable_params = sum(
-          param.numel() for param in self._model.parameters() if param.requires_grad
-        )
-        print(
-          f"Trainable parameters: {trainable_params:,}/{total_params:,} ({trainable_params / total_params:.2%})"
-        )
-
+  def _prepare_model(self, model: Module):
+    self._model = model
     self._model.to(self._device)
 
   def _prepare_optimizer(self):
@@ -302,12 +256,12 @@ class HFPretrainedClassifier(BaseEstimator, ClassifierMixin):
       self._label_weights = torch.zeros(self.n_classes_)
       for label, weight in class_weights_dict.items():
         self._label_weights[label] = weight
-      self._label_weights = self._label_weights.to(self.device)
+      self._label_weights = self._label_weights.to(self._device)
 
     if self.verbose:
       print(f"Using class weights: {self._label_weights}")
 
-  def _preapre_loss_function(self):
+  def _prepare_loss_function(self):
     from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
 
     if self.n_classes_ == 2:
@@ -319,14 +273,23 @@ class HFPretrainedClassifier(BaseEstimator, ClassifierMixin):
     self,
     X: np.ndarray,
     y: np.ndarray,
-    data_transforms: Callable = None,
+    data_transforms: List[Callable] = None,
     shuffle: bool = False,
   ):
-    dataset = HFPretrainedDataset(
-      torch.tensor(X),
+    default_transforms = [
+      transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],  # ImageNet mean
+        std=[0.229, 0.224, 0.225],  # ImageNet std
+      ),
+    ]
+
+    if data_transforms is not None:
+      default_transforms[0:0] = data_transforms
+
+    dataset = TorchImageDataset(
+      torch.tensor(X, dtype=torch.float32),
       torch.tensor(y, dtype=torch.float32),
-      self.pretrained_model_name_or_path,
-      data_transforms=data_transforms,
+      data_transforms=transforms.Compose(default_transforms),
     )
 
     if self.batch_size == "auto":
@@ -353,7 +316,7 @@ class HFPretrainedClassifier(BaseEstimator, ClassifierMixin):
     self._prepare_optimizer()
     self._prepare_scheduler()
     self._prepare_weights(y_train)
-    self._preapre_loss_function()
+    self._prepare_loss_function()
 
     validloader = None
     if self.early_stopping or self.scheduler == "reduce_on_plateau":
@@ -369,11 +332,11 @@ class HFPretrainedClassifier(BaseEstimator, ClassifierMixin):
     )
 
     self._train_model(trainloader, validloader)
+    self.is_fitted_ = True
 
     if self.n_classes_ == 2 and self.threshold_calibration is not None:
       self._calibrate_thresholds(y_valid, self.predict_proba(X_valid))
 
-    self.is_fitted_ = True
     return self
 
   def _train_model(self, trainloader: DataLoader, validloader: DataLoader = None):
@@ -479,7 +442,7 @@ class HFPretrainedClassifier(BaseEstimator, ClassifierMixin):
       epoch_train_loss += batch_loss / len(trainloader)
 
       with torch.no_grad():
-        logits = self._model(X_batch).logits
+        logits = self._model(X_batch)
         y_logit.append(logits.cpu())
         y_true.append(y_batch.cpu())
 
@@ -495,13 +458,8 @@ class HFPretrainedClassifier(BaseEstimator, ClassifierMixin):
   def _train_batch(self, X_batch: np.ndarray, y_batch: np.ndarray):
     def closure():
       self._optimizer.zero_grad()
-      outputs = self._model(X_batch, labels=y_batch)
-
-      if self._label_weights is None:
-        loss = outputs.loss
-      else:
-        logits = outputs.logits
-        loss = self._criterion(logits, y_batch)
+      logits = self._model(X_batch)
+      loss = self._criterion(logits, y_batch)
 
       loss.backward()
       return loss
@@ -525,7 +483,7 @@ class HFPretrainedClassifier(BaseEstimator, ClassifierMixin):
         X_batch = X_batch.to(self._device)
         y_batch = y_batch.unsqueeze(1).float().to(self._device)
 
-        logits = self._model(X_batch).logits
+        logits = self._model(X_batch)
         loss = self._criterion(logits, y_batch)
         epoch_validation_loss += loss.item() / len(validloader)
 
@@ -575,14 +533,11 @@ class HFPretrainedClassifier(BaseEstimator, ClassifierMixin):
         "appropriate arguments before using this estimator."
       )
       raise NotFittedError(msg)
-    y_preds = []
-    y_prob = self.predict_proba(X_test)
-    thresholds = np.arange(0.0, 1.0, 0.01)
-    for threshold in thresholds:
-      y_pred = (y_prob >= threshold).astype(float)
-      y_preds.append(y_pred)
 
-    return y_preds
+    y_prob = self.predict_proba(X_test)
+    y_pred = (y_prob >= self._threshold).astype(float)
+
+    return y_pred
 
   def predict_proba(self, X_test: np.ndarray):
     if not self.is_fitted_:
@@ -599,9 +554,13 @@ class HFPretrainedClassifier(BaseEstimator, ClassifierMixin):
     with torch.no_grad():
       for X_batch, _ in testloader:
         X_batch = X_batch.to(self._device)
+        logits = self._model(X_batch)
 
-        y_out = self._model(X_batch).logits
-        prob = torch.sigmoid(y_out)
+        if self.n_classes_ == 2:
+          prob = torch.sigmoid(logits)
+        else:
+          prob = torch.softmax(logits, dim=1)
+
         y_prob.append(prob.cpu())
 
     y_prob = torch.cat(y_prob).numpy()
@@ -609,15 +568,14 @@ class HFPretrainedClassifier(BaseEstimator, ClassifierMixin):
     return y_prob
 
 
-class ResNetPretrainedClassifier(HFPretrainedClassifier):
+class ResNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
   def __init__(
     self,
-    pretrained_model_name_or_path: str = "microsoft/resnet-18",
     # Core model configuration
     freeze_pretrained: bool = False,
     freeze_except_layers: list = None,
     class_weight: Union[Dict[int, float], str, None] = None,
-    data_transforms: Callable = None,
+    data_transforms: List[Callable] = None,
     # Training configuration
     random_state: int = None,
     shuffle: bool = True,
@@ -659,9 +617,6 @@ class ResNetPretrainedClassifier(HFPretrainedClassifier):
     step_size: int = 10,  # Only used when scheduler='step'
   ):
     super().__init__(
-      pretrained_model_name_or_path=pretrained_model_name_or_path,
-      freeze_pretrained=freeze_pretrained,
-      freeze_except_layers=freeze_except_layers,
       class_weight=class_weight,
       data_transforms=data_transforms,
       random_state=random_state,
@@ -692,3 +647,43 @@ class ResNetPretrainedClassifier(HFPretrainedClassifier):
       t_max=t_max,
       step_size=step_size,
     )
+    self.freeze_pretrained = freeze_pretrained
+    self.freeze_except_layers = freeze_except_layers
+
+  def _prepare_model(self):
+    from torchvision.models import resnet18
+
+    model = resnet18(weights="IMAGENET1K_V1")
+    num_features = model.fc.in_features
+    if self.n_classes_ == 2:
+      model.fc = torch.nn.Linear(num_features, 1)
+    else:
+      model.fc = torch.nn.Linear(num_features, self.n_classes_)
+
+    if self.freeze_pretrained:
+      total_params = 0
+      trainable_params = 0
+
+      for name, param in model.named_parameters():
+        total_params += param.numel()
+        param.requires_grad = False
+
+        if "fc" in name:
+          param.requires_grad = True
+          trainable_params += param.numel()
+
+        if self.freeze_except_layers is not None:
+          for layer_name in self.freeze_except_layers:
+            if layer_name in name:
+              param.requires_grad = True
+              trainable_params += param.numel()
+              # Avoid double counting
+              if "fc" in name:
+                trainable_params -= param.numel()
+
+      if self.verbose:
+        print(
+          f"Trainable parameters: {trainable_params:,}/{total_params:,} ({trainable_params / total_params:.2%})"
+        )
+
+    super()._prepare_model(model)
