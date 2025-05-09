@@ -4,10 +4,10 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 import torch
 import numpy as np
 
-from torch.nn import Module
 from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score
 from sklearn.exceptions import NotFittedError
+from matplotlib.axes import Axes
 from torchvision import transforms
 
 try:
@@ -152,9 +152,10 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
     y = np.array([y_map[label] for label in y])
     return y
 
-  def _prepare_model(self, model: Module):
-    self._model = model
-    self._model.to(self._device)
+  def _prepare_model(self):
+    raise NotImplementedError(
+      "Create a subclass that inherits this one and setup `self._model` in your overriden `_prepare_model` method."
+    )
 
   def _prepare_optimizer(self):
     from torch.optim import AdamW, Adam, SGD, RMSprop, LBFGS
@@ -567,10 +568,132 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
 
     return y_prob
 
+  def plot(
+    self,
+    X_test: np.ndarray,
+    target_classes: List[int] = None,
+    method_name: Literal[
+      "gradcam",
+      "finercam",
+      "shapleycam",
+      "fem",
+      "hirescam",
+      "gradcamelementwise",
+      "ablationcam",
+      "xgradcam",
+      "gradcamplusplus",
+      "scorecam",
+      "eigencam",
+      "eigengradcam",
+      "kpca_cam",
+      "randomcam",
+      "fullgrad",
+    ] = "gradcam",
+    ax: Union[np.ndarray, Axes] = None,
+    **kwargs,
+  ):
+    from matplotlib import pyplot as plt
+    from pytorch_grad_cam import (
+      GradCAM,
+      FinerCAM,
+      ShapleyCAM,
+      FEM,
+      HiResCAM,
+      GradCAMElementWise,
+      AblationCAM,
+      XGradCAM,
+      GradCAMPlusPlus,
+      ScoreCAM,
+      EigenCAM,
+      EigenGradCAM,
+      KPCA_CAM,
+      RandomCAM,
+      FullGrad,
+    )
+    from pytorch_grad_cam.utils.image import show_cam_on_image
+    from pytorch_grad_cam.utils.model_targets import (
+      BinaryClassifierOutputTarget,
+      ClassifierOutputTarget,
+    )
+
+    method_map = {
+      "gradcam": GradCAM,
+      "finercam": FinerCAM,
+      "shapleycam": ShapleyCAM,
+      "fem": FEM,
+      "hirescam": HiResCAM,
+      "gradcamelementwise": GradCAMElementWise,
+      "ablationcam": AblationCAM,
+      "xgradcam": XGradCAM,
+      "gradcamplusplus": GradCAMPlusPlus,
+      "scorecam": ScoreCAM,
+      "eigencam": EigenCAM,
+      "eigengradcam": EigenGradCAM,
+      "kpca_cam": KPCA_CAM,
+      "randomcam": RandomCAM,
+      "fullgrad": FullGrad,
+    }
+    method = method_map.get(method_name)
+
+    if target_classes is None:
+      plot_classes = self.predict(X_test).reshape((-1, 1))
+    else:
+      plot_classes = np.stack((target_classes,) * len(X_test))
+
+    if ax is None:
+      _, ax = plt.subplots(
+        plot_classes.shape[1],
+        plot_classes.shape[0],
+        figsize=np.array(plot_classes.shape) * 6.5,
+      )
+    if type(ax).__name__ == "ndarray" and ax.ndim == 1:
+      ax = ax.reshape(np.flip(plot_classes.shape))
+    elif type(ax).__name__ == "Axes":
+      ax = np.array([[ax]])
+
+    if not np.array_equal(ax.shape, np.flip(plot_classes.shape)):
+      raise ValueError(f"shape of ax should be {plot_classes.shape}")
+
+    data_transforms = transforms.Compose(
+      [
+        transforms.Normalize(
+          mean=[0.485, 0.456, 0.406],  # ImageNet mean
+          std=[0.229, 0.224, 0.225],  # ImageNet std
+        ),
+      ]
+    )
+    dataset = TorchImageDataset(
+      torch.tensor(X_test, dtype=torch.float32), np.zeros(len(X_test)), data_transforms
+    )
+    self._model.eval()
+
+    with method(model=self._model, target_layers=self._gradcam_layers) as cam:
+      for i, row in enumerate(plot_classes):
+        background = np.transpose(X_test[i], (1, 2, 0)).astype(np.float32) / 255.0
+        for j, plot_class in enumerate(row):
+          image = dataset[i][0].unsqueeze(0).to(self._device)
+          targets = [
+            BinaryClassifierOutputTarget(plot_class)
+            if self.n_classes_ == 2
+            else ClassifierOutputTarget(plot_class)
+          ]
+          mask = cam(image, targets)[0, :]
+          visualization = show_cam_on_image(
+            background, mask, use_rgb=True, image_weight=0.75
+          )
+          ax[j, i].imshow(visualization)
+          ax[j, i].set_title(f"GradCAM (Class: {plot_class})")
+          ax[j, i].axis("off")
+
+    return ax
+
 
 class ResNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
   def __init__(
     self,
+    architecture: Literal[
+      "resnet18", "resnet34", "resnet50", "resnet101", "resnet152"
+    ] = "resnet18",
     # Core model configuration
     freeze_pretrained: bool = False,
     freeze_except_layers: list = None,
@@ -647,24 +770,34 @@ class ResNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
       t_max=t_max,
       step_size=step_size,
     )
+    self.architecture = architecture
     self.freeze_pretrained = freeze_pretrained
     self.freeze_except_layers = freeze_except_layers
 
   def _prepare_model(self):
-    from torchvision.models import resnet18
+    from torchvision.models import resnet18, resnet34, resnet50, resnet101, resnet152
 
-    model = resnet18(weights="IMAGENET1K_V1")
-    num_features = model.fc.in_features
+    architecture_map = {
+      "resnet18": resnet18,
+      "resnet34": resnet34,
+      "resnet50": resnet50,
+      "resnet101": resnet101,
+      "resnet152": resnet152,
+    }
+
+    model_fn = architecture_map.get(self.architecture)
+    self._model = model_fn(weights="IMAGENET1K_V1")
+    num_features = self._model.fc.in_features
     if self.n_classes_ == 2:
-      model.fc = torch.nn.Linear(num_features, 1)
+      self._model.fc = torch.nn.Linear(num_features, 1)
     else:
-      model.fc = torch.nn.Linear(num_features, self.n_classes_)
+      self._model.fc = torch.nn.Linear(num_features, self.n_classes_)
 
     if self.freeze_pretrained:
       total_params = 0
       trainable_params = 0
 
-      for name, param in model.named_parameters():
+      for name, param in self._model.named_parameters():
         total_params += param.numel()
         param.requires_grad = False
 
@@ -686,4 +819,5 @@ class ResNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
           f"Trainable parameters: {trainable_params:,}/{total_params:,} ({trainable_params / total_params:.2%})"
         )
 
-    super()._prepare_model(model)
+    self._gradcam_layers = [self._model.layer4[-1]]
+    self._model.to(self._device)
