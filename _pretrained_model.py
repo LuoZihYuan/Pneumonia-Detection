@@ -823,7 +823,141 @@ class ConvNeXtPretrainedClassifier(BaseTorchPretrainedImageClassifier):
           f"Trainable parameters: {trainable_params:,}/{total_params:,} ({trainable_params / total_params:.2%})"
         )
 
-    self._gradcam_layers = [self._model.features[-1][-1].block]
+    self._gradcam_layers = [self._model.features[7][-1].block]
+    self._model.to(self._device)
+
+
+class DenseNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
+  def __init__(
+    self,
+    architecture: Literal[
+      "convnext_tiny", "convnext_small", "convnext_base", "convnext_large"
+    ] = "convnext_tiny",
+    # Core model configuration
+    freeze_pretrained: bool = False,
+    freeze_except_layers: list = None,
+    class_weight: Union[Dict[int, float], str, None] = None,
+    data_transforms: List[Callable] = None,
+    # Training configuration
+    random_state: int = None,
+    shuffle: bool = True,
+    batch_size: Union[str, int] = "auto",
+    max_iter: int = 200,
+    verbose: bool = False,
+    # Optimization strategy
+    solver: Literal["adamw", "adam", "sgd", "rmsprop", "lbfgs"] = "adamw",
+    scheduler: Literal[
+      "reduce_on_plateau", "cosine_annealing", "step", "exponential"
+    ] = "reduce_on_plateau",
+    learning_rate: float = 0.001,
+    # Early stopping parameters
+    early_stopping: bool = True,
+    validation_fraction: float = 0.1,
+    tol: float = 1e-4,
+    n_iter_no_change: int = 10,
+    # Threshold tuning parameters
+    default_threshold: float = 0.5,
+    threshold_calibration: Union[
+      Literal["accuracy", "f1", "precision", "recall"], Callable
+    ] = None,
+    # Solve-specific parameters
+    alpha: float = 0,
+    beta_1: float = 0.9,  # Only used when solver='adam' or 'adamw'.
+    beta_2: float = 0.999,  # Only used when solver='adam' or 'adamw'.
+    epsilon: float = 1e-8,  # Only used when solver='adam' or 'adamw'.
+    momentum: float = 0.9,  # Only used when solver='sgd'.
+    nesterovs_momentum: bool = True,  # Only used when solver='sgd', and momentum greater than 0.
+    rho: float = 0.99,  # Only used when solver='rmsprop'.
+    max_fun: int = 15000,  # Only used when solver='lbfgs'.
+    # Scheduler-specific parameters
+    factor: float = 0.5,  # Only used when lr_scheduler='reduce_on_plateau' or 'exponential'
+    patience: int = 2,  # Only used when scheduler='reduce_on_plateau'
+    min_lr: Union[
+      List[float], float
+    ] = 0,  # Only used when lr_scheduler='reduce_on_plateau'
+    t_max: int = None,  # Only used when scheduler='cosine_annealing'
+    step_size: int = 10,  # Only used when scheduler='step'
+  ):
+    super().__init__(
+      class_weight=class_weight,
+      data_transforms=data_transforms,
+      random_state=random_state,
+      shuffle=shuffle,
+      batch_size=batch_size,
+      max_iter=max_iter,
+      verbose=verbose,
+      solver=solver,
+      scheduler=scheduler,
+      learning_rate=learning_rate,
+      early_stopping=early_stopping,
+      validation_fraction=validation_fraction,
+      tol=tol,
+      n_iter_no_change=n_iter_no_change,
+      default_threshold=default_threshold,
+      threshold_calibration=threshold_calibration,
+      alpha=alpha,
+      beta_1=beta_1,
+      beta_2=beta_2,
+      epsilon=epsilon,
+      momentum=momentum,
+      nesterovs_momentum=nesterovs_momentum,
+      rho=rho,
+      max_fun=max_fun,
+      factor=factor,
+      patience=patience,
+      min_lr=min_lr,
+      t_max=t_max,
+      step_size=step_size,
+    )
+    self.architecture = architecture
+    self.freeze_pretrained = freeze_pretrained
+    self.freeze_except_layers = freeze_except_layers
+
+  def _prepare_model(self):
+    from torchvision.models import densenet121, densenet161, densenet169, densenet201
+
+    architecture_map = {
+      "densenet121": densenet121,
+      "densenet161": densenet161,
+      "densenet169": densenet169,
+      "densenet201": densenet201,
+    }
+
+    model_fn = architecture_map.get(self.architecture)
+    self._model = model_fn(weights="IMAGENET1K_V1")
+    num_features = self._model.classifier.in_features
+    if self.n_classes_ == 2:
+      self._model.classifier = torch.nn.Linear(num_features, 1)
+    else:
+      self._model.classifier = torch.nn.Linear(num_features, self.n_classes_)
+
+    if self.freeze_pretrained:
+      total_params = 0
+      trainable_params = 0
+
+      for name, param in self._model.named_parameters():
+        total_params += param.numel()
+        param.requires_grad = False
+
+        if "classifier" in name:
+          param.requires_grad = True
+          trainable_params += param.numel()
+
+        if self.freeze_except_layers is not None:
+          for layer_name in self.freeze_except_layers:
+            if layer_name in name:
+              param.requires_grad = True
+              trainable_params += param.numel()
+              # Avoid double counting
+              if "classifier" in name:
+                trainable_params -= param.numel()
+
+      if self.verbose:
+        print(
+          f"Trainable parameters: {trainable_params:,}/{total_params:,} ({trainable_params / total_params:.2%})"
+        )
+
+    self._gradcam_layers = [self._model.features[-1]]
     self._model.to(self._device)
 
 
