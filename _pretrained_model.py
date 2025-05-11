@@ -1,14 +1,12 @@
+from __future__ import annotations
 from typing import Callable, Dict, List, Literal, Union
 from sklearn.base import BaseEstimator, ClassifierMixin
+from matplotlib.axes import Axes
 
 import torch
 import numpy as np
-
 from torch.utils.data import Dataset, DataLoader
-from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score
 from sklearn.exceptions import NotFittedError
-from matplotlib.axes import Axes
-from torchvision import transforms
 
 try:
   # Check if we're in a Jupyter/IPython environment
@@ -27,8 +25,8 @@ except NameError:
 class TorchImageDataset(Dataset):
   def __init__(
     self,
-    features: np.ndarray,
-    labels: np.ndarray,
+    features: torch.tensor,
+    labels: torch.tensor,
     data_transforms: Callable = None,
   ):
     self.features = features
@@ -136,7 +134,7 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
     else:
       self._rng = np.random.RandomState()
 
-  def _prepare_labels(self, y: np.ndarray):
+  def _prepare_labels(self, y: np.ndarray) -> np.ndarray:
     unique_labels = np.sort(np.unique(y))
     if not hasattr(self, "classes_"):
       if len(unique_labels) < 2:
@@ -157,7 +155,7 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
       "Create a subclass that inherits this one and setup `self._model` in your overriden `_prepare_model` method."
     )
 
-  def _prepare_optimizer(self):
+  def _prepare_optimizer(self) -> None:
     from torch.optim import AdamW, Adam, SGD, RMSprop, LBFGS
 
     parameters = filter(lambda p: p.requires_grad, self._model.parameters())
@@ -203,7 +201,7 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
           max_eval=self.max_fun,
         )
 
-  def _prepare_scheduler(self):
+  def _prepare_scheduler(self) -> None:
     from torch.optim.lr_scheduler import (
       ReduceLROnPlateau,
       CosineAnnealingLR,
@@ -233,7 +231,7 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
       case None:
         self._scheduler = None
 
-  def _prepare_weights(self, y_train: np.ndarray):
+  def _prepare_weights(self, y_train: np.ndarray) -> None:
     from sklearn.utils.class_weight import compute_class_weight
 
     self._label_weights = None
@@ -262,7 +260,7 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
     if self.verbose:
       print(f"Using class weights: {self._label_weights}")
 
-  def _prepare_loss_function(self):
+  def _prepare_loss_function(self) -> None:
     from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
 
     if self.n_classes_ == 2:
@@ -276,7 +274,9 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
     y: np.ndarray,
     data_transforms: List[Callable] = None,
     shuffle: bool = False,
-  ):
+  ) -> DataLoader:
+    from torchvision import transforms
+
     default_transforms = [
       transforms.Normalize(
         mean=[0.485, 0.456, 0.406],  # ImageNet mean
@@ -307,7 +307,9 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
       dataset, batch_size=batch_size, shuffle=shuffle, generator=generator
     )
 
-  def fit(self, X_train: np.ndarray, y_train: np.ndarray):
+  def fit(
+    self, X_train: np.ndarray, y_train: np.ndarray
+  ) -> BaseTorchPretrainedImageClassifier:
     from sklearn.model_selection import train_test_split
 
     self.is_fitted_ = False
@@ -340,7 +342,11 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
 
     return self
 
-  def _train_model(self, trainloader: DataLoader, validloader: DataLoader = None):
+  def _train_model(
+    self, trainloader: DataLoader, validloader: DataLoader = None
+  ) -> None:
+    from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score
+
     early_stopping_counter = 0
     best_model_weights = None
 
@@ -421,7 +427,7 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
           f"-- Loaded best model with validation loss: {self.best_validation_loss_:.4f} --"
         )
 
-  def _train_epoch(self, trainloader: DataLoader):
+  def _train_epoch(self, trainloader: DataLoader) -> None:
     self._model.train()
 
     epoch_train_loss = 0
@@ -456,7 +462,7 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
     self.train_loss_curve_.append(epoch_train_loss)
     self.train_history_.append((y_true, y_pred))
 
-  def _train_batch(self, X_batch: np.ndarray, y_batch: np.ndarray):
+  def _train_batch(self, X_batch: np.ndarray, y_batch: np.ndarray) -> float:
     def closure():
       self._optimizer.zero_grad()
       logits = self._model(X_batch)
@@ -473,7 +479,7 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
 
     return loss.item()
 
-  def _evaluate_epoch(self, validloader):
+  def _evaluate_epoch(self, validloader) -> None:
     self._model.eval()
 
     y_true = []
@@ -499,7 +505,9 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
     self.validation_loss_curve_.append(epoch_validation_loss)
     self.validation_history_.append((y_true, y_pred))
 
-  def _calibrate_thresholds(self, y_valid: np.ndarray, y_prob: np.ndarray):
+  def _calibrate_thresholds(self, y_valid: np.ndarray, y_prob: np.ndarray) -> None:
+    from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score
+
     if callable(self.threshold_calibration):
       scorer = self.threshold_calibration
     elif isinstance(self.threshold_calibration, str):
@@ -527,7 +535,7 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
       print(f"Best threshold: {best_threshold:.2f} with best score: {best_score:.4f}")
     self._threshold = best_threshold
 
-  def predict(self, X_test: np.ndarray):
+  def predict(self, X_test: np.ndarray) -> np.ndarray:
     if not self.is_fitted_:
       msg = (
         f"This {type(self).__name__} instance is not fitted yet. Call 'fit' with "
@@ -540,7 +548,7 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
 
     return y_pred
 
-  def predict_proba(self, X_test: np.ndarray):
+  def predict_proba(self, X_test: np.ndarray) -> np.ndarray:
     if not self.is_fitted_:
       msg = (
         f"This {type(self).__name__} instance is not fitted yet. Call 'fit' with "
@@ -568,13 +576,17 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
 
     return y_prob
 
-  def plot(
+  def plot(self):
+    raise NotImplementedError(
+      "Create a subclass that inherits this one and call `self._plot()` in your overriden `plot` method."
+    )
+
+  def _plot(
     self,
     X_test: np.ndarray,
     target_classes: List[int] = None,
     method_name: Literal[
       "gradcam",
-      "finercam",
       "shapleycam",
       "fem",
       "hirescam",
@@ -590,12 +602,12 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
       "fullgrad",
     ] = "gradcam",
     ax: Union[np.ndarray, Axes] = None,
-    **kwargs,
-  ):
+    reshape_transform: Callable = None,
+  ) -> np.ndarray:
     from matplotlib import pyplot as plt
+    from torchvision import transforms
     from pytorch_grad_cam import (
       GradCAM,
-      FinerCAM,
       ShapleyCAM,
       FEM,
       HiResCAM,
@@ -618,7 +630,6 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
 
     method_map = {
       "gradcam": GradCAM,
-      "finercam": FinerCAM,
       "shapleycam": ShapleyCAM,
       "fem": FEM,
       "hirescam": HiResCAM,
@@ -667,7 +678,11 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
     )
     self._model.eval()
 
-    with method(model=self._model, target_layers=self._gradcam_layers) as cam:
+    with method(
+      model=self._model,
+      target_layers=self._gradcam_layers,
+      reshape_transform=reshape_transform,
+    ) as cam:
       for i, row in enumerate(plot_classes):
         background = np.transpose(X_test[i], (1, 2, 0)).astype(np.float32) / 255.0
         for j, plot_class in enumerate(row):
@@ -682,7 +697,9 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
             background, mask, use_rgb=True, image_weight=0.75
           )
           ax[j, i].imshow(visualization)
-          ax[j, i].set_title(f"{type(self._model).__name__} (Class: {plot_class})")
+          ax[j, i].set_title(
+            f"{type(self._model).__name__} {type(cam).__name__} (Class: {plot_class})"
+          )
           ax[j, i].axis("off")
 
     return ax
@@ -696,7 +713,7 @@ class ConvNeXtPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     ] = "convnext_tiny",
     # Core model configuration
     freeze_pretrained: bool = False,
-    freeze_except_layers: list = None,
+    freeze_except_layers: list = None,  # ["features.7"]
     class_weight: Union[Dict[int, float], str, None] = None,
     data_transforms: List[Callable] = None,
     # Training configuration
@@ -826,6 +843,32 @@ class ConvNeXtPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     self._gradcam_layers = [self._model.features[7][-1].block]
     self._model.to(self._device)
 
+  def plot(
+    self,
+    X_test: np.ndarray,
+    target_classes: List[int] = None,
+    method_name: Literal[
+      "gradcam",
+      "shapleycam",
+      "fem",
+      "hirescam",
+      "gradcamelementwise",
+      "ablationcam",
+      "xgradcam",
+      "gradcamplusplus",
+      "scorecam",
+      "eigencam",
+      "eigengradcam",
+      "kpca_cam",
+      "randomcam",
+      "fullgrad",
+    ] = "gradcam",
+    ax: Union[np.ndarray, Axes] = None,
+  ):
+    self._plot(
+      X_test=X_test, target_classes=target_classes, method_name=method_name, ax=ax
+    )
+
 
 class DenseNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
   def __init__(
@@ -835,7 +878,7 @@ class DenseNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     ] = "densenet121",
     # Core model configuration
     freeze_pretrained: bool = False,
-    freeze_except_layers: list = None,
+    freeze_except_layers: list = None,  # ["denseblock4"]
     class_weight: Union[Dict[int, float], str, None] = None,
     data_transforms: List[Callable] = None,
     # Training configuration
@@ -960,6 +1003,32 @@ class DenseNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     self._gradcam_layers = [self._model.features[-1]]
     self._model.to(self._device)
 
+  def plot(
+    self,
+    X_test: np.ndarray,
+    target_classes: List[int] = None,
+    method_name: Literal[
+      "gradcam",
+      "shapleycam",
+      "fem",
+      "hirescam",
+      "gradcamelementwise",
+      "ablationcam",
+      "xgradcam",
+      "gradcamplusplus",
+      "scorecam",
+      "eigencam",
+      "eigengradcam",
+      "kpca_cam",
+      "randomcam",
+      "fullgrad",
+    ] = "gradcam",
+    ax: Union[np.ndarray, Axes] = None,
+  ):
+    self._plot(
+      X_test=X_test, target_classes=target_classes, method_name=method_name, ax=ax
+    )
+
 
 class EfficientNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
   def __init__(
@@ -976,7 +1045,7 @@ class EfficientNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     ] = "efficientnet_b0",
     # Core model configuration
     freeze_pretrained: bool = False,
-    freeze_except_layers: list = None,
+    freeze_except_layers: list = None,  # ["features.7", "features.8"]
     class_weight: Union[Dict[int, float], str, None] = None,
     data_transforms: List[Callable] = None,
     # Training configuration
@@ -1114,6 +1183,32 @@ class EfficientNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     self._gradcam_layers = [self._model.features[-1]]
     self._model.to(self._device)
 
+  def plot(
+    self,
+    X_test: np.ndarray,
+    target_classes: List[int] = None,
+    method_name: Literal[
+      "gradcam",
+      "shapleycam",
+      "fem",
+      "hirescam",
+      "gradcamelementwise",
+      "ablationcam",
+      "xgradcam",
+      "gradcamplusplus",
+      "scorecam",
+      "eigencam",
+      "eigengradcam",
+      "kpca_cam",
+      "randomcam",
+      "fullgrad",
+    ] = "gradcam",
+    ax: Union[np.ndarray, Axes] = None,
+  ):
+    self._plot(
+      X_test=X_test, target_classes=target_classes, method_name=method_name, ax=ax
+    )
+
 
 class ResNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
   def __init__(
@@ -1123,7 +1218,7 @@ class ResNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     ] = "resnet18",
     # Core model configuration
     freeze_pretrained: bool = False,
-    freeze_except_layers: list = None,
+    freeze_except_layers: list = None,  # ["layer4"]
     class_weight: Union[Dict[int, float], str, None] = None,
     data_transforms: List[Callable] = None,
     # Training configuration
@@ -1249,6 +1344,32 @@ class ResNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     self._gradcam_layers = [self._model.layer4[-1]]
     self._model.to(self._device)
 
+  def plot(
+    self,
+    X_test: np.ndarray,
+    target_classes: List[int] = None,
+    method_name: Literal[
+      "gradcam",
+      "shapleycam",
+      "fem",
+      "hirescam",
+      "gradcamelementwise",
+      "ablationcam",
+      "xgradcam",
+      "gradcamplusplus",
+      "scorecam",
+      "eigencam",
+      "eigengradcam",
+      "kpca_cam",
+      "randomcam",
+      "fullgrad",
+    ] = "gradcam",
+    ax: Union[np.ndarray, Axes] = None,
+  ):
+    self._plot(
+      X_test=X_test, target_classes=target_classes, method_name=method_name, ax=ax
+    )
+
 
 class SwinTransformerPretrainedClassifier(BaseTorchPretrainedImageClassifier):
   def __init__(
@@ -1256,7 +1377,7 @@ class SwinTransformerPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     architecture: Literal["swin_t", "swin_s", "swin_b"] = "swin_t",
     # Core model configuration
     freeze_pretrained: bool = False,
-    freeze_except_layers: list = None,
+    freeze_except_layers: list = None,  # ["features.7"]
     class_weight: Union[Dict[int, float], str, None] = None,
     data_transforms: List[Callable] = None,
     # Training configuration
@@ -1373,8 +1494,46 @@ class SwinTransformerPretrainedClassifier(BaseTorchPretrainedImageClassifier):
           f"Trainable parameters: {trainable_params:,}/{total_params:,} ({trainable_params / total_params:.2%})"
         )
 
-    self._gradcam_layers = [self._model.features[-1][-1].norm1]
+    self._gradcam_layers = [self._model.features[7][-1].norm2]
     self._model.to(self._device)
+
+  def plot(
+    self,
+    X_test: np.ndarray,
+    target_classes: List[int] = None,
+    method_name: Literal[
+      "gradcam",
+      "shapleycam",
+      "fem",
+      "hirescam",
+      "gradcamelementwise",
+      "ablationcam",
+      "xgradcam",
+      "gradcamplusplus",
+      "scorecam",
+      "eigencam",
+      "eigengradcam",
+      "kpca_cam",
+      "randomcam",
+      "fullgrad",
+    ] = "gradcam",
+    ax: Union[np.ndarray, Axes] = None,
+  ):
+    def reshape_transform(tensor, height=7, width=7):
+      # result = tensor.reshape(tensor.size(0), height, width, tensor.size(2))
+
+      # Bring the channels to the first dimension,
+      # like in CNNs.
+      result = tensor.transpose(2, 3).transpose(1, 2)
+      return result
+
+    self._plot(
+      X_test=X_test,
+      target_classes=target_classes,
+      method_name=method_name,
+      ax=ax,
+      reshape_transform=reshape_transform,
+    )
 
 
 class VisionTransformerPretrainedClassifier(BaseTorchPretrainedImageClassifier):
@@ -1383,7 +1542,7 @@ class VisionTransformerPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     architecture: Literal["vit_b_16", "vit_b_32", "vit_l_16", "vit_l_32"] = "vit_b_16",
     # Core model configuration
     freeze_pretrained: bool = False,
-    freeze_except_layers: list = None,
+    freeze_except_layers: list = None,  # ["encoder_layer_11"] or ["encoder_layer_23"]
     class_weight: Union[Dict[int, float], str, None] = None,
     data_transforms: List[Callable] = None,
     # Training configuration
@@ -1507,3 +1666,41 @@ class VisionTransformerPretrainedClassifier(BaseTorchPretrainedImageClassifier):
 
     self._gradcam_layers = [self._model.encoder.layers[-1].ln_1]
     self._model.to(self._device)
+
+  def plot(
+    self,
+    X_test: np.ndarray,
+    target_classes: List[int] = None,
+    method_name: Literal[
+      "gradcam",
+      "shapleycam",
+      "fem",
+      "hirescam",
+      "gradcamelementwise",
+      "ablationcam",
+      "xgradcam",
+      "gradcamplusplus",
+      "scorecam",
+      "eigencam",
+      "eigengradcam",
+      "kpca_cam",
+      "randomcam",
+      "fullgrad",
+    ] = "gradcam",
+    ax: Union[np.ndarray, Axes] = None,
+  ):
+    def reshape_transform(tensor, height=14, width=14):
+      result = tensor[:, 1:, :].reshape(tensor.size(0), height, width, tensor.size(2))
+
+      # Bring the channels to the first dimension,
+      # like in CNNs.
+      result = result.transpose(2, 3).transpose(1, 2)
+      return result
+
+    self._plot(
+      X_test=X_test,
+      target_classes=target_classes,
+      method_name=method_name,
+      ax=ax,
+      reshape_transform=reshape_transform,
+    )
