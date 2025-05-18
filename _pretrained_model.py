@@ -59,7 +59,7 @@ class BaseTorchPretrainedImageClassifier(BaseEstimator, ClassifierMixin):
     scheduler: Literal[
       "reduce_on_plateau", "cosine_annealing", "step", "exponential"
     ] = None,
-    learning_rate: float = 1e-5,
+    learning_rate: float = 1e-3,
     # Early stopping parameters
     early_stopping: bool = True,
     validation_fraction: float = 0.1,
@@ -727,7 +727,7 @@ class ConvNeXtPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     scheduler: Literal[
       "reduce_on_plateau", "cosine_annealing", "step", "exponential"
     ] = "reduce_on_plateau",
-    learning_rate: float = 0.001,
+    learning_rate: float = 1e-4,
     # Early stopping parameters
     early_stopping: bool = True,
     validation_fraction: float = 0.1,
@@ -892,7 +892,7 @@ class DenseNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     scheduler: Literal[
       "reduce_on_plateau", "cosine_annealing", "step", "exponential"
     ] = "reduce_on_plateau",
-    learning_rate: float = 0.001,
+    learning_rate: float = 1e-4,
     # Early stopping parameters
     early_stopping: bool = True,
     validation_fraction: float = 0.1,
@@ -1059,7 +1059,7 @@ class EfficientNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     scheduler: Literal[
       "reduce_on_plateau", "cosine_annealing", "step", "exponential"
     ] = "reduce_on_plateau",
-    learning_rate: float = 0.001,
+    learning_rate: float = 1e-4,
     # Early stopping parameters
     early_stopping: bool = True,
     validation_fraction: float = 0.1,
@@ -1232,7 +1232,7 @@ class ResNetPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     scheduler: Literal[
       "reduce_on_plateau", "cosine_annealing", "step", "exponential"
     ] = "reduce_on_plateau",
-    learning_rate: float = 0.001,
+    learning_rate: float = 1e-4,
     # Early stopping parameters
     early_stopping: bool = True,
     validation_fraction: float = 0.1,
@@ -1391,7 +1391,7 @@ class SwinTransformerPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     scheduler: Literal[
       "reduce_on_plateau", "cosine_annealing", "step", "exponential"
     ] = "reduce_on_plateau",
-    learning_rate: float = 0.001,
+    learning_rate: float = 1e-3,
     # Early stopping parameters
     early_stopping: bool = True,
     validation_fraction: float = 0.1,
@@ -1556,7 +1556,7 @@ class VisionTransformerPretrainedClassifier(BaseTorchPretrainedImageClassifier):
     scheduler: Literal[
       "reduce_on_plateau", "cosine_annealing", "step", "exponential"
     ] = "reduce_on_plateau",
-    learning_rate: float = 0.001,
+    learning_rate: float = 1e-3,
     # Early stopping parameters
     early_stopping: bool = True,
     validation_fraction: float = 0.1,
