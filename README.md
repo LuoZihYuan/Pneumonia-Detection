@@ -117,7 +117,9 @@ Additionaly, deep learning models can easily overfit the training data, thus mul
 - F1-score: harmonic mean of precision and recall ($2 \times \frac{precision \times recall}{precision + recall}$)
 - Precision: the proportion of all the model's positive classifications that are actually positive ($\frac{TP}{TP\ +\ FP}$)
 - Recall:  the proportion of all actual positives that were classified correctly as positives ($\frac{TP}{TP +\ FN}$)
-- Accuracy: the proportion of all classifications that were correct ($\frac{TP +\ TN}{TP +\ TN+\ FP+\ FN}$)...[read more](https://developers.google.com/machine-learning/crash-course/classification/accuracy-precision-recall)
+- Accuracy: the proportion of all classifications that were correct ($\frac{TP +\ TN}{TP +\ TN+\ FP+\ FN}$)
+
+[Read more](https://developers.google.com/machine-learning/crash-course/classification/accuracy-precision-recall)
 
 ### Confusion Matrix Analysis
 Confusion matrix is a simple table used to measure how well a classification model is performing. It compares the predictions made by the model with the actual results and shows where the model was right or wrong. This helps understand where the model is making mistakes as further improvement guidance... [read more](https://www.geeksforgeeks.org/confusion-matrix-machine-learning/)
@@ -135,5 +137,5 @@ Deep learning models are often viewed as black boxes because their internal deci
 
 ## Future Work
 
-- Dataset Expansion: Increasing the dataset size may further improve overall model performance, as certain variations may not appear frequently in a small dataset.
-- Bias & Fairness Analysis: Currently, the model is trained on X-rays of children aged 1 to 5 in Guangzhou. Further investigations into the model's performance across different age groups and ethnicities could be conducted.
+- **Dataset Expansion**: Increasing the dataset size may further improve overall model performance, as certain variations may not appear frequently in a small dataset.
+- **Bias & Fairness Analysis**: Currently, the model is trained on X-rays of children aged 1 to 5 in Guangzhou. Further investigations into the model's performance across different age groups and ethnicities could be conducted.
