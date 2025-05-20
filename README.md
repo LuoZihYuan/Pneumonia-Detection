@@ -99,7 +99,7 @@ Hyperparameters of a model can impact its overall structure, training efficiency
 
 Learning rate plays an important role in adjusting model parameters at each step of its optimization algorithm. However, defining a uniform learning rate that does not cause the model to diverge or get stuck in local minima remains a serious challenge. This is were the following technique can be helpful:
 
-- **Dynamic Scheduling Learning Rate**: Fine-tuning the learning rate can help improve convergence and provide better generalization. For example, when the model's performance plateaus, the learning rate can be decreased to prevent overshooting.
+- **Dynamic Learning Rate Scheduling**: Fine-tuning the learning rate can help improve convergence and provide better generalization. For example, when the model's performance plateaus, the learning rate can be decreased to prevent overshooting.
 
 Additionaly, deep learning models can easily overfit the training data, thus multiple techniques have been employed to address this issue:
 
@@ -117,23 +117,21 @@ Additionaly, deep learning models can easily overfit the training data, thus mul
 - F1-score: harmonic mean of precision and recall ($2 \times \frac{precision \times recall}{precision + recall}$)
 - Precision: the proportion of all the model's positive classifications that are actually positive ($\frac{TP}{TP\ +\ FP}$)
 - Recall:  the proportion of all actual positives that were classified correctly as positives ($\frac{TP}{TP +\ FN}$)
-- Accuracy: the proportion of all classifications that were correct ($\frac{TP +\ TN}{TP +\ TN+\ FP+\ FN}$)
-
-...[read more](https://developers.google.com/machine-learning/crash-course/classification/accuracy-precision-recall)
+- Accuracy: the proportion of all classifications that were correct ($\frac{TP +\ TN}{TP +\ TN+\ FP+\ FN}$)...[read more](https://developers.google.com/machine-learning/crash-course/classification/accuracy-precision-recall)
 
 ### Confusion Matrix Analysis
 Confusion matrix is a simple table used to measure how well a classification model is performing. It compares the predictions made by the model with the actual results and shows where the model was right or wrong. This helps understand where the model is making mistakes as further improvement guidance... [read more](https://www.geeksforgeeks.org/confusion-matrix-machine-learning/)
 
 ### ROC Curve Analysis
-The ROC curve is drawn by calculating the true positive rate (TPR) and false positive rate (FPR) at every possible threshold, then graphing TPR over FPR. A perfect model, which at some threshold has a TPR of 1.0 and a FPR of 0.0, can be represented by either a point at (0, 1) if all other thresholds are ignored. [read more](https://developers.google.com/machine-learning/crash-course/classification/roc-and-auc)
+The ROC curve is drawn by calculating the true positive rate (TPR) and false positive rate (FPR) at every possible threshold, then graphing TPR over FPR. A perfect model, which at some threshold has a TPR of 1.0 and a FPR of 0.0, can be represented by either a point at (0, 1) if all other thresholds are ignored... [read more](https://developers.google.com/machine-learning/crash-course/classification/roc-and-auc)
 
 ![Model ROC Curve](./assets/images/auc_by_model.png)
 
 ### Precision-Recall Curve Analysis
-The precision-recall curve shows the tradeoff between precision and recall for different thresholds. A high area under the curve represents both high recall and high precision. [read more](https://scikit-learn.org/stable/auto_examples/model_selection/plot_precision_recall.html)
+The precision-recall curve shows the tradeoff between precision and recall for different thresholds. A high area under the curve represents both high recall and high precision... [read more](https://scikit-learn.org/stable/auto_examples/model_selection/plot_precision_recall.html)
 
 ## Visualization
-Deep learning models are often viewed as black boxes because their internal decision making processes are difficult to understand. Tools like GradCAM and Eigen-CAM are able to solve this problem by creating a heatmap that can be overlaid on top of the input image to highlight which parts of the image induced the greatest magnitude of activation from the layers. [read more](https://www.datature.io/blog/understanding-your-yolov8-model-with-eigen-cam)
+Deep learning models are often viewed as black boxes because their internal decision making processes are difficult to understand. Tools like GradCAM and Eigen-CAM are able to solve this problem by creating a heatmap that can be overlaid on top of the input image to highlight which parts of the image induced the greatest magnitude of activation from the layers... [read more](https://www.datature.io/blog/understanding-your-yolov8-model-with-eigen-cam)
 
 ## Future Work
 
