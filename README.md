@@ -1,6 +1,6 @@
 ![Repo Header](./assets/images/repo_header.png)
 
-# 🫁 Pneumonia-Detection 🩻
+# 🫁 Pneumonia-Detection 🫁
 
 This project explores various traditional machine learning and deep learning approaches for detecting pneumonia in chest X-rays. It achieved up to **92.7% accuracy** and **94.4% F1-score** with DenseNet. For model interpretability, EigenCAM is employed to highlight the key regions on the X-rays contributing to the models' predictions.
 
