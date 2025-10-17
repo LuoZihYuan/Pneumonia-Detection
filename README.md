@@ -41,7 +41,7 @@ All visualizations showed that the deep learning models are capable of identifyi
 - [📋 Overview](#-overview)
 - [📦 Dataset](#-dataset)
 - [🧽 Preprocessing](#-preprocessing)
-  - [⛏️ Feature Extraction](#-feature-extraction)
+  - [⛏️ Feature Extraction](#%EF%B8%8F-feature-extraction)
   - [🔄 Image Transformation](#-image-transformation)
 - [🤖 Modeling](#-modeling)
   - [🧮 Traditional Model Hyperparameter Tuning](#-traditional-model-hyperparameter-tuning)
@@ -51,7 +51,7 @@ All visualizations showed that the deep learning models are capable of identifyi
   - [🧩 Confusion Matrix Analysis](#-confusion-matrix-analysis)
   - [📈 ROC Curve Analysis](#-roc-curve-analysis)
   - [📉 Precision-Recall Curve Analysis](#-precision-recall-curve-analysis)
-- [👁️ Visualization](#-visualization)
+- [👁️ Visualization](#%EF%B8%8F-visualization)
 - [🚀 Future Work](#-future-work)
 
 ## 📋 Overview
